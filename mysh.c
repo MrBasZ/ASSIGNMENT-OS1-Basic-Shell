@@ -15,7 +15,7 @@
 #define COMMAND_BUFSIZE 1024
 #define TOKEN_BUFSIZE 64
 #define TOKEN_DELIMITERS " \t\r\n\a"
-#define CMD_DELIMITERS " ; "
+#define CMD_DELIMITERS ";"
 
 //prototype function
 void mysh_init();
@@ -24,6 +24,7 @@ void mysh_print_promt();
 void sigint_handler(int signal);
 char* mysh_read_command();
 char** mysh_split_command(char* cmd);
+char** mysh_split_concurrent_command(char* cmd);
 int mysh_execute_command(char** args);
 int mysh_process_command(char** args);
 
@@ -44,20 +45,56 @@ int main(int argc, char **argv)
 
 void mysh_loop()
 {
-    char *cmd;
-    char **args;
+    char* cmd;
+    char** args;
     int state;
+    char** concur;
 
-    do{
-        mysh_print_promt();
-        cmd = mysh_read_command();
-        args = mysh_split_command(cmd);
-        state = mysh_process_command(args);
+    cmd = mysh_read_command();
+    concur = mysh_split_concurrent_command(cmd);
 
-        //Clear memory
-        free(cmd);
-        free(args);
-    }while(state);
+    for (int i = 0; *(concur + i); i++)
+        {
+            printf("cut=[%s]\n", *(concur + i));
+        }
+
+    // do{
+    //     mysh_print_promt();
+    //     cmd = mysh_read_command();
+    //     args = mysh_split_command(cmd);
+    //     state = mysh_process_command(args);
+
+    //     //Clear memory
+    //     free(cmd);
+    //     free(args);
+    // }while(state);
+}
+
+char** mysh_split_concurrent_command(char* cmd){
+    int posi = 0;
+    char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
+    char *token;
+
+    //get the first token
+    token = strtok(cmd, CMD_DELIMITERS);
+    
+    //walk through other tokens
+    while(token != NULL){
+        //printf("%s\n",token);
+        if(token == "quit")
+            exit(0);
+            
+        tokens[posi] = token;
+        posi++;
+
+        //get next token with the same string
+        token = strtok(NULL, CMD_DELIMITERS);
+    }
+    // for(token = strtok(cmd, TOKEN_DELIMITERS); token != NULL; token = strtok(NULL, TOKEN_DELIMITERS)){
+        
+    // }
+    tokens[posi] = NULL;
+    return tokens;
 }
 
 int mysh_process_command(char** args){
