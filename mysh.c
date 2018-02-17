@@ -5,13 +5,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
+#include <fcntl.h>
 
 #define COLOR_NONE "\033[0m"
-#define COLOR_RED "\033[1;31m"
+#define COLOR_RED "\033[0;31m"
 #define COLOR_YELLOW "\033[1;33m"
 #define COLOR_CYAN "\033[1;36m"
 #define COLOR_GREEN "\033[1;32m"
-#define COLOR_GRAY "\033[1;30m"
 
 #define COMMAND_BUFSIZE 1024
 #define TOKEN_BUFSIZE 64
@@ -20,6 +20,7 @@
 
 //prototype function
 void mysh_init();
+void mysh_batch(char** argv);
 void mysh_loop();
 void mysh_print_promt();
 void mysh_sigint_handler(int signal);
@@ -32,20 +33,20 @@ int mysh_check_concurrent(char* cmd);
 
 //grobal variable
 pid_t child_pid, kill_pid;
-int is_terminated = 0;
 int is_concurrent = 0;
 int idx = 0;
 
 int main(int argc, char **argv)
 {
+    //initail signal
     mysh_init();
+    mysh_batch(argv);
     mysh_loop();
     
     return EXIT_SUCCESS;
 }
 
-void mysh_loop()
-{
+void mysh_loop(){
     char* cmd;
     char** args;
     int status;
@@ -73,6 +74,59 @@ void mysh_loop()
         free(cmd);
         free(args);
     }while(status);
+}
+
+void mysh_batch(char** argv){
+    //No argv Files
+    if(argv[1] == NULL)
+        return;
+
+    int input_fd, end_file;
+    int status;
+    char* batch_cmd;
+    char* batch_line = malloc(sizeof(char*) * TOKEN_BUFSIZE);
+    char** batch_parsing;
+    char** batch_concur;
+
+    //Open file descriptors
+    input_fd = open (argv[1], O_RDONLY);
+    if (input_fd == -1) {
+        // open failed
+        fprintf(stderr, COLOR_RED "%s: No such file\n",argv[1]);
+        return;
+    }
+    
+    //read file into string
+    end_file = read(input_fd, &batch_line[0], COMMAND_BUFSIZE);
+    batch_line[end_file] = '\0';
+
+    //Close file descriptors
+    close (input_fd);
+
+    while ((batch_cmd = strsep(&batch_line, "\n")) != NULL){
+
+        //with concurrent
+        if(mysh_check_concurrent(batch_cmd)){
+            //have concurrent
+            is_concurrent = 1;
+            batch_concur = mysh_split_concurrent_command(batch_cmd);
+            status = mysh_process_command(batch_concur);
+            idx = 0;
+        }else {
+            //non concurrent
+            is_concurrent = 0;
+            batch_parsing = mysh_split_command(batch_cmd);
+            status = mysh_process_command(batch_parsing);
+        }
+
+        //with non concurrent
+        // batch_parsing = mysh_split_command(batch_cmd);
+        // status = mysh_execute_command(batch_parsing);
+
+        //if(!status) return;
+    }
+
+    return;
 }
 
 int mysh_check_concurrent(char* cmd){
@@ -106,9 +160,8 @@ char** mysh_split_concurrent_command(char* cmd){
 }
 
 int mysh_process_command(char** args){
-    if(is_concurrent){
-
-    }else{
+    //not concurrent
+    if(!(is_concurrent)){
         if (args[0] == NULL) {
             // An empty command was entered.
             return 1;
@@ -131,8 +184,11 @@ int mysh_execute_command(char** args){
     child_pid = fork();
     if (child_pid == 0) {
         // Child processstatus
+        
         if(is_concurrent){
             kill_pid = child_pid;
+
+            //split command
             concur = mysh_split_command(*(args + idx));
             
             //terminate program
@@ -151,8 +207,8 @@ int mysh_execute_command(char** args){
             if (execvp(args[0], args) < 0) {
                 fprintf(stderr, COLOR_RED "mysh: %s command not found\n",args[0]);
             }
-            printf(COLOR_CYAN);
         }
+
         exit(EXIT_FAILURE);
     } else if (child_pid < 0) {
         // Error forking
@@ -166,6 +222,7 @@ int mysh_execute_command(char** args){
             idx++;
             mysh_execute_command(args);
         }
+        //wait chlid process
         wait(0);
   }
 
@@ -241,7 +298,6 @@ void mysh_init(){
 }
 
 void mysh_sigint_handler(int signal) {
-    is_terminated = 1;
     //Kill zombie process
     waitpid(kill_pid, NULL, 0);
 
