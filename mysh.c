@@ -1,4 +1,5 @@
 #include <sys/wait.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,7 +9,7 @@
 #define COLOR_NONE "\033[0m"
 #define COLOR_RED "\033[1;31m"
 #define COLOR_YELLOW "\033[1;33m"
-#define COLOR_CYAN "\033[0;36m"
+#define COLOR_CYAN "\033[1;36m"
 #define COLOR_GREEN "\033[1;32m"
 #define COLOR_GRAY "\033[1;30m"
 
@@ -21,25 +22,25 @@
 void mysh_init();
 void mysh_loop();
 void mysh_print_promt();
-void sigint_handler(int signal);
+void mysh_sigint_handler(int signal);
 char* mysh_read_command();
 char** mysh_split_command(char* cmd);
 char** mysh_split_concurrent_command(char* cmd);
 int mysh_execute_command(char** args);
 int mysh_process_command(char** args);
+int mysh_check_concurrent(char* cmd);
 
-//builtin commands
-char *builtin_str[] = {
-  "shell",
-  "quit"
-};
-
+//grobal variable
+pid_t child_pid, kill_pid;
+int is_terminated = 0;
+int is_concurrent = 0;
+int idx = 0;
 
 int main(int argc, char **argv)
 {
     mysh_init();
     mysh_loop();
-
+    
     return EXIT_SUCCESS;
 }
 
@@ -47,27 +48,41 @@ void mysh_loop()
 {
     char* cmd;
     char** args;
-    int state;
+    int status;
     char** concur;
 
-    cmd = mysh_read_command();
-    concur = mysh_split_concurrent_command(cmd);
+    do{
+        
+        mysh_print_promt();
+        cmd = mysh_read_command();
 
-    for (int i = 0; *(concur + i); i++)
-        {
-            printf("cut=[%s]\n", *(concur + i));
+        if(mysh_check_concurrent(cmd)){
+            //have concurrent
+            is_concurrent = 1;
+            concur = mysh_split_concurrent_command(cmd);
+            status = mysh_process_command(concur);
+            idx = 0;
+        }else {
+            //non concurrent
+            is_concurrent = 0;
+            args = mysh_split_command(cmd);
+            status = mysh_process_command(args);
         }
 
-    // do{
-    //     mysh_print_promt();
-    //     cmd = mysh_read_command();
-    //     args = mysh_split_command(cmd);
-    //     state = mysh_process_command(args);
+        //Clear memory
+        free(cmd);
+        free(args);
+    }while(status);
+}
 
-    //     //Clear memory
-    //     free(cmd);
-    //     free(args);
-    // }while(state);
+int mysh_check_concurrent(char* cmd){
+    int i = 0;
+    while(cmd[i] != '\0'){
+        if(cmd[i] == ';')
+            return 1;
+        i++;
+    }
+    return 0;
 }
 
 char** mysh_split_concurrent_command(char* cmd){
@@ -75,53 +90,68 @@ char** mysh_split_concurrent_command(char* cmd){
     char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
     char *token;
 
-    //get the first token
+    //get the first tokens
     token = strtok(cmd, CMD_DELIMITERS);
     
     //walk through other tokens
     while(token != NULL){
-        //printf("%s\n",token);
-        if(token == "quit")
-            exit(0);
-            
         tokens[posi] = token;
         posi++;
 
         //get next token with the same string
         token = strtok(NULL, CMD_DELIMITERS);
     }
-    // for(token = strtok(cmd, TOKEN_DELIMITERS); token != NULL; token = strtok(NULL, TOKEN_DELIMITERS)){
-        
-    // }
     tokens[posi] = NULL;
     return tokens;
 }
 
 int mysh_process_command(char** args){
-    if (args[0] == NULL) {
-        // An empty command was entered.
-        return 1;
+    if(is_concurrent){
+
+    }else{
+        if (args[0] == NULL) {
+            // An empty command was entered.
+            return 1;
+        }
+
+        if(strcmp(args[0], "quit") == 0){
+            printf(COLOR_CYAN "Goodbye :)\nTerminated\n");
+            exit(0);
+        }
     }
 
     return mysh_execute_command(args);
 }
 
 int mysh_execute_command(char** args){
-    pid_t child_pid, end_pid;
     int status;
+    char** concur;
+
+    fflush(NULL);
     child_pid = fork();
     if (child_pid == 0) {
         // Child processstatus
-        // signal(SIGINT, SIG_DFL);
-        // signal(SIGQUIT, SIG_DFL);
-        // signal(SIGTSTP, SIG_DFL);
-        // signal(SIGTTIN, SIG_DFL);
-        // signal(SIGTTOU, SIG_DFL);
-        // signal(SIGCHLD, SIG_DFL);
+        if(is_concurrent){
+            kill_pid = child_pid;
+            concur = mysh_split_command(*(args + idx));
+            
+            //terminate program
+            if(!strcmp(concur[0], "quit")){
+                printf(COLOR_CYAN "Goodbye :)\n");
+                kill(kill_pid, SIGTERM);
+                exit(0);
+            }
 
-        //printf( "[son] pid %d from pid %d\n", getpid(), getppid());
-        if (execvp(args[0], args) < 0) {
-            fprintf(stderr, "mysh: %s command not found\n",args[0]);
+            if (execvp(concur[0], concur) < 0) {
+                fprintf(stderr, COLOR_RED "mysh: %s command not found\n",concur[0]);
+            }
+            free(concur);
+        }else{
+            kill_pid = child_pid;
+            if (execvp(args[0], args) < 0) {
+                fprintf(stderr, COLOR_RED "mysh: %s command not found\n",args[0]);
+            }
+            printf(COLOR_CYAN);
         }
         exit(EXIT_FAILURE);
     } else if (child_pid < 0) {
@@ -130,21 +160,13 @@ int mysh_execute_command(char** args){
         exit(EXIT_FAILURE);
     } else {
         // Parent process
-    //    printf( "[dad] pid %d\n", getpid());
-       do {
-            waitpid(child_pid, &status, WUNTRACED);
-            //printf("\n%d\n",status);
-       } while (!WIFEXITED(status) && !WIFSIGNALED(status));
-        // end_pid = waitpid(child_pid, &status, WNOHANG|WUNTRACED);
-        // if (end_pid == child_pid) {  /* child ended                 */
-        //       if (WIFEXITED(status))
-        //          printf("Child ended normally.n");
-        //       else if (WIFSIGNALED(status))
-        //          printf("Child ended because of an uncaught signal.n");
-        //       else if (WIFSTOPPED(status))
-        //          printf("Child process has stopped.n");
-        //       exit(EXIT_SUCCESS);
-        // }
+
+        //concurrent task
+        if(is_concurrent && *(args + idx)){
+            idx++;
+            mysh_execute_command(args);
+        }
+        wait(0);
   }
 
   return 1;
@@ -166,9 +188,7 @@ char** mysh_split_command(char* cmd){
         //get next token with the same string
         token = strtok(NULL, TOKEN_DELIMITERS);
     }
-    // for(token = strtok(cmd, TOKEN_DELIMITERS); token != NULL; token = strtok(NULL, TOKEN_DELIMITERS)){
-        
-    // }
+
     tokens[posi] = NULL;
     return tokens;
 }
@@ -202,7 +222,7 @@ void mysh_init(){
     // Ignore signalint (Crtl+c)
     struct sigaction sigint_action = {
         // Setup the sighub handler
-        .sa_handler = &sigint_handler,
+        .sa_handler = &mysh_sigint_handler,
         // Restart the system call, if at all possible
         .sa_flags = 0
     };
@@ -220,8 +240,11 @@ void mysh_init(){
     signal(SIGTTIN, SIG_IGN);
 }
 
-void sigint_handler(int signal) {
-    //printf( "[son] pid %d from pid %d\n", getpid(), getppid());
-    system("cleard");
+void mysh_sigint_handler(int signal) {
+    is_terminated = 1;
+    //Kill zombie process
+    waitpid(kill_pid, NULL, 0);
+
+    system("clear");
     printf(COLOR_YELLOW "\nHint:" COLOR_NONE " You can exit program using the" COLOR_RED " 'quit' " COLOR_NONE "command.\n");
 }
