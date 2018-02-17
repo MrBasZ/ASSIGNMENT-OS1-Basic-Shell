@@ -76,12 +76,194 @@ void mysh_loop(){
     }while(status);
 }
 
+/*--------------intitial terminate signal---------------*/
+
+void mysh_init(){
+    system("clear");
+
+    // Ignore signalint (Crtl+c)
+    struct sigaction sigint_action = {
+        // Setup the sighub handler
+        .sa_handler = &mysh_sigint_handler,
+        // Restart the system call, if at all possible
+        .sa_flags = 0
+    };
+
+    // Block every signal during the handler
+    sigemptyset(&sigint_action.sa_mask);
+
+    // Intercept SIGINT
+    if ((sigaction(SIGINT, &sigint_action, NULL)) == -1) {
+        perror("Error: cannot handle SIGINT"); // Should not happen
+    }
+
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+}
+
+/*--------------Set 1 read command----------------------*/
+
+char* mysh_read_command(){
+    int bufsize = COMMAND_BUFSIZE;
+    int position = 0;
+    int c;
+    char *buffer = malloc(sizeof(char) * COMMAND_BUFSIZE);
+    
+    while (1) {
+        c = getchar();
+
+        if (c == EOF || c == '\n') {
+            buffer[position] = '\0';
+            return buffer;
+        } else {
+            buffer[position] = c;
+        }
+        position++;
+    }
+}
+
+/*--------------Set 2 paring & process -----------------*/
+
+//check concurrent
+int mysh_check_concurrent(char* cmd){
+    int i = 0;
+    while(cmd[i] != '\0'){
+        if(cmd[i] == ';')
+            return 1;
+        i++;
+    }
+    return 0;
+}
+
+//not concurret
+char** mysh_split_command(char* cmd){
+    int posi = 0;
+    char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
+    char *token;
+
+    //get the first token
+    token = strtok(cmd, TOKEN_DELIMITERS);
+    
+    //walk through other tokens
+    while(token != NULL){
+        tokens[posi] = token;
+        posi++;
+
+        //get next token with the same string
+        token = strtok(NULL, TOKEN_DELIMITERS);
+    }
+
+    tokens[posi] = NULL;
+    return tokens;
+}
+
+//concurret
+char** mysh_split_concurrent_command(char* cmd){
+    int posi = 0;
+    char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
+    char *token;
+
+    //get the first tokens
+    token = strtok(cmd, CMD_DELIMITERS);
+    
+    //walk through other tokens
+    while(token != NULL){
+        tokens[posi] = token;
+        posi++;
+
+        //get next token with the same string
+        token = strtok(NULL, CMD_DELIMITERS);
+    }
+    tokens[posi] = NULL;
+    return tokens;
+}
+
+//process befor execute
+int mysh_process_command(char** args){
+    //not concurrent
+    if(!(is_concurrent)){
+        if (args[0] == NULL) {
+            // An empty command was entered.
+            return 1;
+        }
+
+        if(strcmp(args[0], "quit") == 0){
+            printf(COLOR_CYAN "Goodbye :)\nTerminated\n");
+            exit(0);
+        }
+    }
+
+    return mysh_execute_command(args);
+}
+
+
+/*--------------------Set 3 execute---------------------*/
+
+int mysh_execute_command(char** args){
+    int status;
+    char** concur;
+
+    fflush(NULL);
+    child_pid = fork();
+    if (child_pid == 0) {
+        // Child processstatus
+        
+        if(is_concurrent){
+            kill_pid = child_pid;
+
+            //split for concurrent command
+            concur = mysh_split_command(*(args + idx));
+            
+            //terminate program
+            if(!strcmp(concur[0], "quit")){
+                printf(COLOR_CYAN "Goodbye :)\n");
+                kill(kill_pid, SIGTERM);
+                exit(0);
+            }
+
+            printf(COLOR_NONE);
+            if (execvp(concur[0], concur) < 0) {
+                fprintf(stderr, COLOR_RED "mysh: %s command not found\n",concur[0]);
+            }
+            free(concur);
+        }else{
+            kill_pid = child_pid;
+
+            printf(COLOR_NONE);
+            if (execvp(args[0], args) < 0) {
+                fprintf(stderr, COLOR_RED "mysh: %s command not found\n",args[0]);
+            }
+        }
+
+        exit(EXIT_FAILURE);
+    } else if (child_pid < 0) {
+        // Error forking
+        fprintf(stderr, "Fork failed\n");
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process
+
+        //concurrent task
+        if(is_concurrent && *(args + idx)){
+            idx++;
+            mysh_execute_command(args);
+        }
+        //wait chlid process
+        wait(0);
+  }
+
+  return 1;
+}
+
+/*--------------read command with batch file------------*/
+
 void mysh_batch(char** argv){
     //No argv Files
     if(argv[1] == NULL)
         return;
 
-    int input_fd, end_file;
+    int input_fd, end_fd;
     int status;
     char* batch_cmd;
     char* batch_line = malloc(sizeof(char*) * TOKEN_BUFSIZE);
@@ -92,13 +274,13 @@ void mysh_batch(char** argv){
     input_fd = open (argv[1], O_RDONLY);
     if (input_fd == -1) {
         // open failed
-        fprintf(stderr, COLOR_RED "%s: No such file\n",argv[1]);
+        fprintf(stderr, COLOR_RED "%s: No such file\n" COLOR_NONE,argv[1]);
         return;
     }
     
     //read file into string
-    end_file = read(input_fd, &batch_line[0], COMMAND_BUFSIZE);
-    batch_line[end_file] = '\0';
+    end_fd = read(input_fd, &batch_line[0], COMMAND_BUFSIZE);
+    batch_line[end_fd] = '\0';
 
     //Close file descriptors
     close (input_fd);
@@ -125,178 +307,18 @@ void mysh_batch(char** argv){
 
         //if(!status) return;
     }
-
+    free(batch_line);
     return;
 }
 
-int mysh_check_concurrent(char* cmd){
-    int i = 0;
-    while(cmd[i] != '\0'){
-        if(cmd[i] == ';')
-            return 1;
-        i++;
-    }
-    return 0;
-}
+/*--------------------MISC---------------------*/
 
-char** mysh_split_concurrent_command(char* cmd){
-    int posi = 0;
-    char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
-    char *token;
-
-    //get the first tokens
-    token = strtok(cmd, CMD_DELIMITERS);
-    
-    //walk through other tokens
-    while(token != NULL){
-        tokens[posi] = token;
-        posi++;
-
-        //get next token with the same string
-        token = strtok(NULL, CMD_DELIMITERS);
-    }
-    tokens[posi] = NULL;
-    return tokens;
-}
-
-int mysh_process_command(char** args){
-    //not concurrent
-    if(!(is_concurrent)){
-        if (args[0] == NULL) {
-            // An empty command was entered.
-            return 1;
-        }
-
-        if(strcmp(args[0], "quit") == 0){
-            printf(COLOR_CYAN "Goodbye :)\nTerminated\n");
-            exit(0);
-        }
-    }
-
-    return mysh_execute_command(args);
-}
-
-int mysh_execute_command(char** args){
-    int status;
-    char** concur;
-
-    fflush(NULL);
-    child_pid = fork();
-    if (child_pid == 0) {
-        // Child processstatus
-        
-        if(is_concurrent){
-            kill_pid = child_pid;
-
-            //split command
-            concur = mysh_split_command(*(args + idx));
-            
-            //terminate program
-            if(!strcmp(concur[0], "quit")){
-                printf(COLOR_CYAN "Goodbye :)\n");
-                kill(kill_pid, SIGTERM);
-                exit(0);
-            }
-
-            if (execvp(concur[0], concur) < 0) {
-                fprintf(stderr, COLOR_RED "mysh: %s command not found\n",concur[0]);
-            }
-            free(concur);
-        }else{
-            kill_pid = child_pid;
-            if (execvp(args[0], args) < 0) {
-                fprintf(stderr, COLOR_RED "mysh: %s command not found\n",args[0]);
-            }
-        }
-
-        exit(EXIT_FAILURE);
-    } else if (child_pid < 0) {
-        // Error forking
-        fprintf(stderr, "Fork failed\n");
-        exit(EXIT_FAILURE);
-    } else {
-        // Parent process
-
-        //concurrent task
-        if(is_concurrent && *(args + idx)){
-            idx++;
-            mysh_execute_command(args);
-        }
-        //wait chlid process
-        wait(0);
-  }
-
-  return 1;
-}
-
-char** mysh_split_command(char* cmd){
-    int posi = 0;
-    char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
-    char *token;
-
-    //get the first token
-    token = strtok(cmd, TOKEN_DELIMITERS);
-    
-    //walk through other tokens
-    while(token != NULL){
-        tokens[posi] = token;
-        posi++;
-
-        //get next token with the same string
-        token = strtok(NULL, TOKEN_DELIMITERS);
-    }
-
-    tokens[posi] = NULL;
-    return tokens;
-}
-
+//printf peompt mysh>
 void mysh_print_promt() {
     printf(COLOR_GREEN "mysh>" COLOR_NONE " ");
 }
 
-char* mysh_read_command(){
-    int bufsize = COMMAND_BUFSIZE;
-    int position = 0;
-    int c;
-    char *buffer = malloc(sizeof(char) * COMMAND_BUFSIZE);
-    
-    while (1) {
-        c = getchar();
-
-        if (c == EOF || c == '\n') {
-            buffer[position] = '\0';
-            return buffer;
-        } else {
-            buffer[position] = c;
-        }
-        position++;
-    }
-}
-
-void mysh_init(){
-    system("clear");
-
-    // Ignore signalint (Crtl+c)
-    struct sigaction sigint_action = {
-        // Setup the sighub handler
-        .sa_handler = &mysh_sigint_handler,
-        // Restart the system call, if at all possible
-        .sa_flags = 0
-    };
-
-    // Block every signal during the handler
-    sigemptyset(&sigint_action.sa_mask);
-
-    // Intercept SIGINT
-    if ((sigaction(SIGINT, &sigint_action, NULL)) == -1) {
-        perror("Error: cannot handle SIGINT"); // Should not happen
-    }
-
-    signal(SIGQUIT, SIG_IGN);
-    signal(SIGTSTP, SIG_IGN);
-    signal(SIGTTIN, SIG_IGN);
-}
-
+//catch signal when press key (Ctrl-c)
 void mysh_sigint_handler(int signal) {
     //Kill zombie process
     waitpid(kill_pid, NULL, 0);
