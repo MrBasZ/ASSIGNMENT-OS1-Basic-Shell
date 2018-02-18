@@ -127,7 +127,7 @@ char* mysh_read_command(){
     }
 }
 
-/*--------------Step 2 paring & process -----------------*/
+/*--------------Step 2 parsing & process -----------------*/
 
 //check concurrent
 int mysh_check_concurrent(char* cmd){
