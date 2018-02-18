@@ -57,7 +57,6 @@ void mysh_loop(){
     char** concur;
 
     do{
-        
         mysh_print_promt();
         cmd = mysh_read_command(); //input command by user
 
@@ -97,9 +96,7 @@ void mysh_init(){
     sigemptyset(&sigint_action.sa_mask);
 
     // Intercept SIGINT
-    if ((sigaction(SIGINT, &sigint_action, NULL)) == -1) {
-        perror("Error: cannot handle SIGINT"); // Should not happen
-    }
+    sigaction(SIGINT, &sigint_action, NULL);
 
     signal(SIGQUIT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
@@ -140,7 +137,7 @@ int mysh_check_concurrent(char* cmd){
     return 0;
 }
 
-//no concurret
+//no concurret (split string with ' \t\r\n\a')
 char** mysh_split_command(char* cmd){
     int posi = 0;
     char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
@@ -162,7 +159,7 @@ char** mysh_split_command(char* cmd){
     return tokens;
 }
 
-//concurret (split string with ;)
+//concurret (split string with ';')
 char** mysh_split_concurrent_command(char* cmd){
     int posi = 0;
     char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
@@ -253,7 +250,7 @@ int mysh_execute_command(char** args){
             idx++;
             mysh_execute_command(args);
         }
-        //wait chlid process
+        //wait child process
         wait(0);
   }
 
@@ -274,7 +271,7 @@ void mysh_batch(char** argv){
     char** batch_parsing;
     char** batch_concur;
 
-    //Open file descriptors
+    //Open file descriptors read only
     input_fd = open (argv[1], O_RDONLY);
     if (input_fd == -1) {
         // open failed
@@ -322,7 +319,6 @@ void mysh_print_promt() {
 void mysh_sigint_handler(int signal) {
     //Kill zombie process
     waitpid(kill_pid, NULL, 0);
-
-    system("clear");
+    //system("clear");
     printf(COLOR_YELLOW "\nHint:" COLOR_NONE " You can exit program using the" COLOR_RED " 'quit' " COLOR_NONE "command.\n");
 }
