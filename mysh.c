@@ -31,7 +31,7 @@ int mysh_execute_command(char** args);
 int mysh_process_command(char** args);
 int mysh_check_concurrent(char* cmd);
 
-//grobal variable
+//global variable
 pid_t child_pid, kill_pid;
 int is_concurrent = 0;
 int idx = 0;
@@ -40,7 +40,11 @@ int main(int argc, char **argv)
 {
     //initail signal
     mysh_init();
+
+    //batch mode
     mysh_batch(argv);
+
+    //main process
     mysh_loop();
     
     return EXIT_SUCCESS;
@@ -55,16 +59,16 @@ void mysh_loop(){
     do{
         
         mysh_print_promt();
-        cmd = mysh_read_command();
+        cmd = mysh_read_command(); //input command by user
 
         if(mysh_check_concurrent(cmd)){
-            //have concurrent
+            //concurrent
             is_concurrent = 1;
             concur = mysh_split_concurrent_command(cmd);
             status = mysh_process_command(concur);
             idx = 0;
         }else {
-            //non concurrent
+            //no concurrent
             is_concurrent = 0;
             args = mysh_split_command(cmd);
             status = mysh_process_command(args);
@@ -85,7 +89,7 @@ void mysh_init(){
     struct sigaction sigint_action = {
         // Setup the sighub handler
         .sa_handler = &mysh_sigint_handler,
-        // Restart the system call, if at all possible
+        // Restart the system call
         .sa_flags = 0
     };
 
@@ -102,7 +106,7 @@ void mysh_init(){
     signal(SIGTTIN, SIG_IGN);
 }
 
-/*--------------Set 1 read command----------------------*/
+/*--------------Step 1 read command----------------------*/
 
 char* mysh_read_command(){
     int bufsize = COMMAND_BUFSIZE;
@@ -123,7 +127,7 @@ char* mysh_read_command(){
     }
 }
 
-/*--------------Set 2 paring & process -----------------*/
+/*--------------Step 2 paring & process -----------------*/
 
 //check concurrent
 int mysh_check_concurrent(char* cmd){
@@ -136,7 +140,7 @@ int mysh_check_concurrent(char* cmd){
     return 0;
 }
 
-//not concurret
+//no concurret
 char** mysh_split_command(char* cmd){
     int posi = 0;
     char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
@@ -158,7 +162,7 @@ char** mysh_split_command(char* cmd){
     return tokens;
 }
 
-//concurret
+//concurret (split string with ;)
 char** mysh_split_concurrent_command(char* cmd){
     int posi = 0;
     char **tokens = malloc(sizeof(char*) * TOKEN_BUFSIZE);
@@ -181,24 +185,24 @@ char** mysh_split_concurrent_command(char* cmd){
 
 //process befor execute
 int mysh_process_command(char** args){
-    //not concurrent
+    //no concurrent
     if(!(is_concurrent)){
         if (args[0] == NULL) {
             // An empty command was entered.
             return 1;
         }
 
+        //terminate program when received 'quit' command
         if(strcmp(args[0], "quit") == 0){
             printf(COLOR_CYAN "Goodbye :)\nTerminated\n");
             exit(0);
         }
     }
-
+    //run command
     return mysh_execute_command(args);
 }
 
-
-/*--------------------Set 3 execute---------------------*/
+/*--------------------Step 3 execute---------------------*/
 
 int mysh_execute_command(char** args){
     int status;
@@ -207,7 +211,7 @@ int mysh_execute_command(char** args){
     fflush(NULL);
     child_pid = fork();
     if (child_pid == 0) {
-        // Child processstatus
+        // Child process
         
         if(is_concurrent){
             kill_pid = child_pid;
@@ -244,7 +248,7 @@ int mysh_execute_command(char** args){
     } else {
         // Parent process
 
-        //concurrent task
+        //Recursive execute concurrent command
         if(is_concurrent && *(args + idx)){
             idx++;
             mysh_execute_command(args);
@@ -285,28 +289,24 @@ void mysh_batch(char** argv){
     //Close file descriptors
     close (input_fd);
 
+    //split each command with '\n'
     while ((batch_cmd = strsep(&batch_line, "\n")) != NULL){
-
-        //with concurrent
         if(mysh_check_concurrent(batch_cmd)){
-            //have concurrent
+            //concurrent
             is_concurrent = 1;
             batch_concur = mysh_split_concurrent_command(batch_cmd);
             status = mysh_process_command(batch_concur);
             idx = 0;
         }else {
-            //non concurrent
+            //no concurrent
             is_concurrent = 0;
             batch_parsing = mysh_split_command(batch_cmd);
             status = mysh_process_command(batch_parsing);
         }
-
-        //with non concurrent
-        // batch_parsing = mysh_split_command(batch_cmd);
-        // status = mysh_execute_command(batch_parsing);
-
         //if(!status) return;
     }
+
+    //clear memory
     free(batch_line);
     return;
 }
